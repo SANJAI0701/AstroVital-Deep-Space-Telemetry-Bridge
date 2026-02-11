@@ -1,0 +1,101 @@
+import streamlit as st
+import paho.mqtt.client as mqtt
+import json
+import pandas as pd
+import time
+from collections import deque
+
+# --- CONFIGURATION ---
+MQTT_BROKER = "test.mosquitto.org"
+MQTT_PORT = 1883
+MQTT_TOPIC = "astrovital/suit_1/telemetry"
+HISTORY_LEN = 200  # Number of data points to keep for the graph
+
+# --- STREAMLIT SETUP ---
+st.set_page_config(page_title="AstroVital Control", layout="wide", page_icon="🛰️")
+
+# Custom CSS for that "NASA" look
+st.markdown("""
+<style>
+    .reportview-container {
+        background: #0e1117;
+    }
+    .metric-card {
+        background-color: #262730;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid #4CAF50;
+    }
+    .alert {
+        border-left: 5px solid #FF4B4B;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- STATE MANAGEMENT ---
+# We use st.session_state to store data between re-renders
+if 'ecg_data' not in st.session_state:
+    st.session_state['ecg_data'] = deque([0]*HISTORY_LEN, maxlen=HISTORY_LEN)
+if 'latest_packet' not in st.session_state:
+    st.session_state['latest_packet'] = {"bpm": 0, "spo2": 0, "status": "WAITING"}
+
+# --- MQTT CALLBACKS ---
+def on_message(client, userdata, message):
+    try:
+        payload = json.loads(message.payload.decode())
+        
+        # Update Session State
+        st.session_state['latest_packet'] = payload
+        st.session_state['ecg_data'].append(payload.get('ecg', 0))
+        
+    except Exception as e:
+        print(f"Error parsing JSON: {e}")
+
+# --- MQTT CLIENT SETUP ---
+@st.cache_resource
+def start_mqtt():
+    client = mqtt.Client()
+    client.on_message = on_message
+    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    client.subscribe(MQTT_TOPIC)
+    client.loop_start() # Run in background thread
+    return client
+
+client = start_mqtt()
+
+# --- DASHBOARD LAYOUT ---
+st.title("🛰️ AstroVital Mission Control")
+st.markdown("Monitoring EVA Suit Telemetry Stream")
+
+# Top Row: Metrics
+col1, col2, col3, col4 = st.columns(4)
+
+current_data = st.session_state['latest_packet']
+
+with col1:
+    st.metric("BPM (Heart Rate)", f"{current_data.get('bpm', 0)}", delta_color="inverse")
+with col2:
+    val = current_data.get('spo2', 0)
+    delta = 0
+    st.metric("SpO2 %", f"{val:.1f}%", delta=delta)
+with col3:
+    status = current_data.get('status', 'WAITING')
+    color = "red" if status == "CRITICAL" else "green"
+    st.markdown(f"**Status:** :{color}[{status}]")
+with col4:
+    st.metric("Signal Source", current_data.get('suit_id', 'N/A'))
+
+# Middle Row: ECG Graph
+st.subheader("Real-time ECG Lead II")
+chart_data = pd.DataFrame({"Amplitude": st.session_state['ecg_data']})
+st.line_chart(chart_data)
+
+# Bottom Row: Alerts & Logs
+if current_data.get('spo2', 100) < 90 and current_data.get('spo2', 100) > 0:
+    st.error("🚨 ALERT: HYPOXIA DETECTED. INITIATE O2 PROTOCOL.")
+else:
+    st.success("Physiological systems nominal.")
+
+# Auto-refresh logic (Streamlit specific hack for real-time loops)
+time.sleep(0.1) 
+st.rerun()
