@@ -1,0 +1,39 @@
+AstroVital System Architecture
+
+1. Data Packet Structure
+
+To optimize bandwidth, data is serialized into JSON packets before transmission. This allows the system to be sensor-agnostic; we can add temperature or CO2 sensors without breaking the receiver.
+
+Sample Payload:
+
+{
+  "suit_id": "EVA-01",
+  "timestamp": 1707663245.5,
+  "ecg": 0.45,
+  "spo2": 98.2,
+  "bpm": 72,
+  "status": "NORMAL"
+}
+
+
+2. ECG Synthesis Algorithm (Firmware)
+
+The ESP32 does not play a recorded file; it generates the waveform mathematically in real-time. This approximates a standard Lead II ECG.
+
+P-Wave: Modeled as a small Gaussian curve.
+
+QRS Complex: A combination of steep positive and negative exponentials to simulate ventricular depolarization.
+
+T-Wave: A broader Gaussian curve representing repolarization.
+
+Noise Injection: Random float values are added to the baseline to simulate muscle artifacts (EMG noise) and test the dashboard's filtering capabilities.
+
+3. Latency Handling
+
+The dashboard uses a deque (Double-Ended Queue) with a fixed length of 200 items. This acts as a rolling buffer.
+
+Incoming Data: Pushed to the right of the queue.
+
+Old Data: Popped from the left.
+
+Benefit: This ensures the memory usage remains constant ($O(1)$ complexity) regardless of how long the mission runs.
