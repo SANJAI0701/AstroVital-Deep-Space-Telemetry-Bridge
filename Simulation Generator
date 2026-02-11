@@ -1,0 +1,64 @@
+import paho.mqtt.client as mqtt
+import json
+import time
+import math
+import random
+
+"""
+SIMULATION SCRIPT
+Use this if you do not have an ESP32 hardware device.
+This script generates the same data packets the C++ code would.
+"""
+
+BROKER = "test.mosquitto.org"
+TOPIC = "astrovital/suit_1/telemetry"
+
+client = mqtt.Client("AstroSimulator")
+client.connect(BROKER)
+
+print(f"Connected to {BROKER}. Transmitting synthetic vitals...")
+
+phase = 0.0
+spo2 = 98.0
+bpm = 72
+
+while True:
+    # 1. Generate Synthetic ECG (Math function)
+    # This creates a PQRST-like wave shape
+    ecg = 0
+    ecg += 0.15 * math.exp(-((phase - 0.5)**2) / 0.02)  # P Wave
+    ecg -= 0.15 * math.exp(-((phase - 1.1)**2) / 0.005) # Q Wave
+    ecg += 1.00 * math.exp(-((phase - 1.2)**2) / 0.005) # R Wave (Spike)
+    ecg -= 0.20 * math.exp(-((phase - 1.3)**2) / 0.005) # S Wave
+    ecg += 0.30 * math.exp(-((phase - 2.0)**2) / 0.1)   # T Wave
+    
+    # Add noise
+    ecg += random.uniform(-0.05, 0.05)
+
+    # 2. Simulate SpO2 Drift
+    if random.random() > 0.9:
+        change = random.choice([-0.1, 0.1])
+        spo2 += change
+        spo2 = max(88.0, min(100.0, spo2)) # Clamp between 88 and 100
+
+    # 3. Create JSON Packet
+    packet = {
+        "suit_id": "EVA-SIMULATION-01",
+        "timestamp": time.time(),
+        "ecg": float(f"{ecg:.3f}"),
+        "spo2": float(f"{spo2:.1f}"),
+        "bpm": bpm,
+        "status": "CRITICAL" if spo2 < 90 else "NORMAL"
+    }
+
+    # 4. Send
+    payload = json.dumps(packet)
+    client.publish(TOPIC, payload)
+    
+    # 5. Loop Timing
+    phase += 0.1
+    if phase > 3.0:
+        phase = 0.0
+    
+    # Simulate 20Hz transmission
+    time.sleep(0.05)
